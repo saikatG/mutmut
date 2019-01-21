@@ -409,7 +409,7 @@ mutations_by_type = {
 
 
 class Context(object):
-    def __init__(self, source=None, mutation_id=ALL, dict_synonyms=None, filename=None, exclude=lambda context: False, config=None):
+    def __init__(self, source=None, mutation_id=ALL, dict_synonyms=None, filename=None, exclude=lambda context: False, config=None, worker_id=None):
         self.index = 0
         self.remove_newline_at_end = False
         if source is not None and source[-1] != '\n':
@@ -429,6 +429,7 @@ class Context(object):
         self._pragma_no_mutate_lines = None
         self._path_by_line = None
         self.config = config
+        self.worker_id = worker_id
 
     def exclude_line(self):
         current_line = self.source_by_line_number[self.current_line_index]
@@ -598,6 +599,13 @@ def mutate_file(backup, context):
         with open(context.filename + '.bak', 'w') as f:
             f.write(code)
     result, number_of_mutations_performed = mutate(context)
-    with open(context.filename, 'w') as f:
+
+    output_filename = context.filename
+
+    if context.worker_id is not None:
+        output_filename = '.mutmut-tmp/%s/%s' % (context.worker_id, context.filename)
+        output_filename = output_filename.replace('lib/', '')  # TODO: fix this hack
+
+    with open(output_filename, 'w') as f:
         f.write(result)
     return number_of_mutations_performed
