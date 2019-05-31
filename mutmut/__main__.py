@@ -168,7 +168,8 @@ class Config(object):
     def __init__(self, swallow_output, test_command, exclude_callback,
                  baseline_time_elapsed, test_time_multiplier, test_time_base,
                  backup, dict_synonyms, total, using_testmon, cache_only,
-                 tests_dirs, hash_of_tests, pre_mutation, post_mutation):
+                 tests_dirs, hash_of_tests, pre_mutation, post_mutation, run_model,
+                 python_startup_imports, python_runner_setup):
         self.swallow_output = swallow_output
         self.test_command = test_command
         self.exclude_callback = exclude_callback
@@ -190,6 +191,9 @@ class Config(object):
         self.suspicious_mutants = 0
         self.post_mutation = post_mutation
         self.pre_mutation = pre_mutation
+        self.run_model = run_model
+        self.python_startup_imports = python_startup_imports
+        self.python_runner_setup = python_runner_setup
 
     def print_progress(self):
         print_status('%s/%s  🎉 %s  ⏰ %s  🤔 %s  🙁 %s' % (self.progress, self.total, self.killed_mutants, self.surviving_mutants_timeout, self.suspicious_mutants, self.surviving_mutants))
@@ -197,70 +201,21 @@ class Config(object):
 
 DEFAULT_TESTS_DIR = 'tests/:test/'
 
+imports_checkpoint = set()
 
-@click.command(context_settings=dict(help_option_names=['-h', '--help']))
-@click.argument('command', nargs=1, required=False)
-@click.argument('argument', nargs=1, required=False)
-@click.argument('argument2', nargs=1, required=False)
-@click.option('--paths-to-mutate', type=click.STRING)
-@click.option('--paths-to-exclude', type=click.STRING, required=False)
-@click.option('--backup/--no-backup', default=False)
-@click.option('--runner')
-@click.option('--use-coverage', is_flag=True, default=False)
-@click.option('--use-patch-file', help='Only mutate lines added/changed in the given patch file')
-@click.option('--tests-dir')
-@click.option('-m', '--test-time-multiplier', default=2.0, type=float)
-@click.option('-b', '--test-time-base', default=0.0, type=float)
-@click.option('-s', '--swallow-output', help='turn off output capture', is_flag=True)
-@click.option('--dict-synonyms')
-@click.option('--cache-only', is_flag=True, default=False)
-@click.option('--version', is_flag=True, default=False)
-@click.option('--suspicious-policy', type=click.Choice(['ignore', 'skipped', 'error', 'failure']), default='ignore')
-@click.option('--untested-policy', type=click.Choice(['ignore', 'skipped', 'error', 'failure']), default='ignore')
-@click.option('--pre-mutation')
-@click.option('--post-mutation')
-@config_from_setup_cfg(
-    dict_synonyms='',
-    runner='python -m pytest -x',
-    tests_dir=DEFAULT_TESTS_DIR,
-    pre_mutation=None,
-    post_mutation=None,
-    use_patch_file=None,
-)
-def climain(command, argument, argument2, paths_to_mutate, backup, runner, tests_dir,
-            test_time_multiplier, test_time_base,
-            swallow_output, use_coverage, dict_synonyms, cache_only, version,
-            suspicious_policy, untested_policy, pre_mutation, post_mutation,
-            use_patch_file, paths_to_exclude):
-    """
-commands:\n
-    run [mutation id]\n
-        Runs mutmut. You probably want to start with just trying this. If you supply a mutation ID mutmut will check just this mutant.\n
-    results\n
-        Print the results.\n
-    apply [mutation id]\n
-        Apply a mutation on disk.\n
-    show [mutation id]\n
-        Show a mutation diff.\n
-    junitxml\n
-        Show a mutation diff with junitxml format.
-    """
-    if test_time_base is None:  # click sets the default=0.0 to None
-        test_time_base = 0.0
-    if test_time_multiplier is None:  # click sets the default=0.0 to None
-        test_time_multiplier = 0.0
-    sys.exit(main(command, argument, argument2, paths_to_mutate, backup, runner,
-                  tests_dir, test_time_multiplier, test_time_base,
-                  swallow_output, use_coverage, dict_synonyms, cache_only,
-                  version, suspicious_policy, untested_policy, pre_mutation,
-                  post_mutation, use_patch_file, paths_to_exclude))
+
+def restore_imports_checkpoint():
+    assert imports_checkpoint
+    for k in sys.modules.copy().keys():
+        if k not in imports_checkpoint:
+            del sys.modules[k]
 
 
 def main(command, argument, argument2, paths_to_mutate, backup, runner, tests_dir,
          test_time_multiplier, test_time_base,
          swallow_output, use_coverage, dict_synonyms, cache_only, version,
-         suspicious_policy, untested_policy, pre_mutation, post_mutation,
-         use_patch_file, paths_to_exclude):
+         suspicious_policy, untested_policy, use_patch_file, paths_to_exclude,
+         python_startup_imports, run_model, python_runner_setup, **kwargs):
     """return exit code, after performing an mutation test run.
 
     :return: the exit code from executing the mutation tests
@@ -348,11 +303,6 @@ Legend for output:
 🤔 Suspicious.       Tests took a long time, but not long enough to be fatal.
 🙁 Survived.         This means your tests needs to be expanded.
 """)
-    baseline_time_elapsed = time_test_suite(
-        swallow_output=not swallow_output,
-        test_command=runner,
-        using_testmon=using_testmon
-    )
 
     if using_testmon:
         copy('.testmondata', '.testmondata-initial')
@@ -408,6 +358,26 @@ Legend for output:
 
     total = sum(len(mutations) for mutations in mutations_by_file.values())
 
+    if run_model == 'python' and python_startup_imports:
+        exec(python_runner_setup)
+        try:
+            exec(python_startup_imports)
+        except SystemExit:
+            pass
+
+    imports_checkpoint.update(set(sys.modules.keys()))
+    assert imports_checkpoint
+
+    sys.path.append(os.getcwd())
+
+    baseline_time_elapsed = time_test_suite(
+        swallow_output=not swallow_output,
+        test_command=runner,
+        using_testmon=using_testmon,
+        run_model=run_model,
+        python_runner_setup=python_runner_setup,
+    )
+
     print()
     print('2. Checking mutants')
     config = Config(
@@ -424,8 +394,10 @@ Legend for output:
         hash_of_tests=hash_of_tests(tests_dirs),
         test_time_multiplier=test_time_multiplier,
         test_time_base=test_time_base,
-        pre_mutation=pre_mutation,
-        post_mutation=post_mutation,
+        python_startup_imports=python_startup_imports,
+        run_model=run_model,
+        python_runner_setup=python_runner_setup,
+        **kwargs,
     )
 
     try:
@@ -437,6 +409,67 @@ Legend for output:
         return compute_exit_code(config)
     finally:
         print()  # make sure we end the output with a newline
+
+
+@click.command(context_settings=dict(help_option_names=['-h', '--help']))
+@click.argument('command', nargs=1, required=False)
+@click.argument('argument', nargs=1, required=False)
+@click.argument('argument2', nargs=1, required=False)
+@click.option('--paths-to-mutate', type=click.STRING)
+@click.option('--paths-to-exclude', type=click.STRING, required=False)
+@click.option('--backup/--no-backup', default=False)
+@click.option('--runner')
+@click.option('--python-runner-setup')
+@click.option('--run-model', help='Run model can be either `process` or `python`. `process` means mutmut spawns a process for each mutation and the `runner` argument is terminal command. `python` means that the runner command is python code to be run')
+@click.option('--python-startup-imports', default='')
+@click.option('--use-coverage', is_flag=True, default=False)
+@click.option('--use-patch-file', help='Only mutate lines added/changed in the given patch file')
+@click.option('--tests-dir')
+@click.option('-m', '--test-time-multiplier', default=2.0, type=float)
+@click.option('-b', '--test-time-base', default=0.0, type=float)
+@click.option('-s', '--swallow-output', help='turn off output capture', is_flag=True)
+@click.option('--dict-synonyms')
+@click.option('--cache-only', is_flag=True, default=False)
+@click.option('--version', is_flag=True, default=False)
+@click.option('--suspicious-policy', type=click.Choice(['ignore', 'skipped', 'error', 'failure']), default='ignore')
+@click.option('--untested-policy', type=click.Choice(['ignore', 'skipped', 'error', 'failure']), default='ignore')
+@click.option('--pre-mutation')
+@click.option('--post-mutation')
+@config_from_setup_cfg(
+    dict_synonyms='',
+
+    # runner='python -m pytest -x',
+    # run_model='process',
+    # python_startup_imports='',
+    python_runner_setup='import pytest',
+    runner='pytest.main(["-x"])',
+    run_model='python',
+    python_startup_imports='pytest.main(["--invalid_parameter_on_purpose_to_make_pytest_import_its_stuff_but_then_error_out"])',
+
+    tests_dir=DEFAULT_TESTS_DIR,
+    pre_mutation=None,
+    post_mutation=None,
+    use_patch_file=None,
+)
+def climain(test_time_multiplier, test_time_base, **kwargs):
+    """
+commands:\n
+    run [mutation id]\n
+        Runs mutmut. You probably want to start with just trying this. If you supply a mutation ID mutmut will check just this mutant.\n
+    results\n
+        Print the results.\n
+    apply [mutation id]\n
+        Apply a mutation on disk.\n
+    show [mutation id]\n
+        Show a mutation diff.\n
+    junitxml\n
+        Show a mutation diff with junitxml format.
+    """
+    if test_time_base is None:  # click sets the default=0.0 to None
+        test_time_base = 0.0
+    if test_time_multiplier is None:  # click sets the default=0.0 to None
+        test_time_multiplier = 0.0
+    sys.exit(main(test_time_multiplier=test_time_multiplier, test_time_base=test_time_base, **kwargs))
 
 
 def popen_streaming_output(cmd, callback, timeout=None):
@@ -531,7 +564,14 @@ def tests_pass(config):
             print(line)
         config.print_progress()
 
-    returncode = popen_streaming_output(config.test_command, feedback, timeout=config.baseline_time_elapsed * 10)
+    if config.run_model == 'process':
+        returncode = popen_streaming_output(config.test_command, feedback, timeout=config.baseline_time_elapsed * 10)
+    else:
+        assert config.run_model == 'python'
+        exec(config.python_runner_setup)
+        restore_imports_checkpoint()
+        returncode = eval(config.test_command)
+
     return returncode == 0 or (config.using_testmon and returncode == 5)
 
 
@@ -659,7 +699,7 @@ def read_patch_data(patch_file_path):
     }
 
 
-def time_test_suite(swallow_output, test_command, using_testmon):
+def time_test_suite(swallow_output, test_command, using_testmon, run_model, python_runner_setup):
     """Execute a test suite specified by ``test_command`` and record
     the time it took to execute the test suite as a floating point number
 
@@ -692,7 +732,13 @@ def time_test_suite(swallow_output, test_command, using_testmon):
         print_status('Running...')
         output.append(line)
 
-    returncode = popen_streaming_output(test_command, feedback)
+    if run_model == 'process':
+        returncode = popen_streaming_output(test_command, feedback)
+    else:
+        assert run_model == 'python'
+        restore_imports_checkpoint()
+        exec(python_runner_setup)
+        returncode = eval(test_command)
 
     if returncode == 0 or (using_testmon and returncode == 5):
         baseline_time_elapsed = time() - start_time
