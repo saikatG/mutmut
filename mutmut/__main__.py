@@ -10,6 +10,8 @@ import shlex
 import subprocess
 import sys
 import traceback
+from contextlib import contextmanager
+from datetime import datetime
 from functools import wraps
 from io import open
 from os.path import isdir, exists
@@ -78,6 +80,9 @@ def config_from_setup_cfg(**defaults):
     return decorator
 
 
+real_stdout = sys.stdout
+
+
 def status_printer():
     """Manage the printing and in-place updating of a line of characters
 
@@ -91,8 +96,8 @@ def status_printer():
         s = next(spinner) + ' ' + s
         len_s = len(s)
         output = '\r' + s + (' ' * max(last_len[0] - len_s, 0))
-        sys.stdout.write(output)
-        sys.stdout.flush()
+        real_stdout.write(output)
+        real_stdout.flush()
         last_len[0] = len_s
     return p
 
@@ -209,6 +214,14 @@ def restore_imports_checkpoint():
     for k in sys.modules.copy().keys():
         if k not in imports_checkpoint:
             del sys.modules[k]
+
+
+def python_runner_warmup(python_runner_setup, python_startup_imports):
+    exec(python_runner_setup)
+    try:
+        exec(python_startup_imports)
+    except SystemExit:
+        pass
 
 
 def main(command, argument, argument2, paths_to_mutate, backup, runner, tests_dir,
@@ -359,11 +372,7 @@ Legend for output:
     total = sum(len(mutations) for mutations in mutations_by_file.values())
 
     if run_model == 'python' and python_startup_imports:
-        exec(python_runner_setup)
-        try:
-            exec(python_startup_imports)
-        except SystemExit:
-            pass
+        python_runner_warmup(python_runner_setup, python_startup_imports)
 
     imports_checkpoint.update(set(sys.modules.keys()))
     assert imports_checkpoint
@@ -397,7 +406,7 @@ Legend for output:
         python_startup_imports=python_startup_imports,
         run_model=run_model,
         python_runner_setup=python_runner_setup,
-        **kwargs,
+        **kwargs
     )
 
     try:
@@ -550,6 +559,49 @@ def popen_streaming_output(cmd, callback, timeout=None):
     return process.returncode
 
 
+class FakeStream:
+    def __init__(self):
+        self.config = None
+
+    def write(self, *args, **kwargs):
+        if self.config:
+            self.config.print_progress()
+
+    def isatty(self):
+        return False
+
+    def flush(self):
+        pass
+
+
+fakestream = FakeStream()
+
+
+@contextmanager
+def stdout_redirector(config):
+    old_stdout = sys.stdout
+    old_stderr = sys.stdout
+
+    sys.stdout = fakestream
+    sys.stderr = fakestream
+    assert fakestream.config is None
+    fakestream.config = config
+    try:
+        yield
+    finally:
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
+        fakestream.config = None
+
+
+def python_run_mode_tests_pass(config):
+    assert config.run_model == 'python'
+    exec(config.python_runner_setup)
+    restore_imports_checkpoint()
+    with stdout_redirector(config):
+        return eval(config.test_command)
+
+
 def tests_pass(config):
     """
     :type config: Config
@@ -567,10 +619,7 @@ def tests_pass(config):
     if config.run_model == 'process':
         returncode = popen_streaming_output(config.test_command, feedback, timeout=config.baseline_time_elapsed * 10)
     else:
-        assert config.run_model == 'python'
-        exec(config.python_runner_setup)
-        restore_imports_checkpoint()
-        returncode = eval(config.test_command)
+        returncode = python_run_mode_tests_pass(config)
 
     return returncode == 0 or (config.using_testmon and returncode == 5)
 
@@ -735,10 +784,7 @@ def time_test_suite(swallow_output, test_command, using_testmon, run_model, pyth
     if run_model == 'process':
         returncode = popen_streaming_output(test_command, feedback)
     else:
-        assert run_model == 'python'
-        restore_imports_checkpoint()
-        exec(python_runner_setup)
-        returncode = eval(test_command)
+        returncode = python_run_mode_time_test_suite(python_runner_setup, run_model, test_command)
 
     if returncode == 0 or (using_testmon and returncode == 5):
         baseline_time_elapsed = time() - start_time
@@ -750,6 +796,15 @@ def time_test_suite(swallow_output, test_command, using_testmon, run_model, pyth
     set_cached_test_time(baseline_time_elapsed)
 
     return baseline_time_elapsed
+
+
+def python_run_mode_time_test_suite(python_runner_setup, run_model, test_command):
+    assert run_model == 'python'
+    restore_imports_checkpoint()
+    exec(python_runner_setup)
+    with stdout_redirector(None):
+        returncode = eval(test_command)
+    return returncode
 
 
 def add_mutations_by_file(mutations_by_file, filename, exclude, dict_synonyms):
