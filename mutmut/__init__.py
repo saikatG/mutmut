@@ -28,7 +28,7 @@ from threading import (
     Thread,
 )
 from time import time, sleep
-
+import traceback as tb
 from parso import parse
 from parso.python.tree import Name, Number, Keyword
 
@@ -741,9 +741,14 @@ def check_mutants(mutants_queue, results_queue, cycle_process_after):
                 results_queue.put(('cycle', None, None, None))
                 did_cycle = True
                 break
+    except:
+        tb.print_exc()
     finally:
-        if not did_cycle:
-            results_queue.put(('end', None, None, None))
+        try:
+            if not did_cycle:
+                results_queue.put(('end', None, None, None))
+        except:
+            tb.print_exc()
 
 
 def run_mutation(context: Context, callback) -> str:
@@ -1136,7 +1141,7 @@ def run_mutation_tests(config, progress, mutations_by_file):
             kwargs=dict(
                 mutants_queue=mutants_queue,
                 results_queue=results_queue,
-                cycle_process_after=1000,
+                cycle_process_after=10,
             )
         )
         t.start()
@@ -1304,6 +1309,5 @@ def close_active_queues():
         try:
             queue.close()
         except:
-            import traceback as tb
             tb.print_exc()
             continue
