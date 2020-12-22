@@ -839,7 +839,7 @@ def tests_pass(config: Config, callback) -> bool:
         return hammett_tests_pass(config, callback)
 
     returncode = popen_streaming_output(config.test_command, callback, timeout=config.baseline_time_elapsed * 10)
-    return returncode == 0 or (config.using_testmon and returncode == 5)
+    return returncode != 1
 
 
 def config_from_setup_cfg(**defaults):
@@ -910,8 +910,9 @@ def guess_paths_to_mutate():
 
 
 class Progress(object):
-    def __init__(self, total):
+    def __init__(self, total, output_legend):
         self.total = total
+        self.output_legend = output_legend
         self.progress = 0
         self.skipped = 0
         self.killed_mutants = 0
@@ -920,7 +921,20 @@ class Progress(object):
         self.suspicious_mutants = 0
 
     def print(self):
-        print_status('{}/{}  🎉 {}  ⏰ {}  🤔 {}  🙁 {}  🔇 {}'.format(self.progress, self.total, self.killed_mutants, self.surviving_mutants_timeout, self.suspicious_mutants, self.surviving_mutants, self.skipped))
+        print_status('{}/{}  {} {}  {} {}  {} {}  {} {}  {} {}'.format(
+            self.progress,
+            self.total,
+            self.output_legend["killed"],
+            self.killed_mutants,
+            self.output_legend["timeout"],
+            self.surviving_mutants_timeout,
+            self.output_legend["suspicious"],
+            self.suspicious_mutants,
+            self.output_legend["survived"],
+            self.surviving_mutants,
+            self.output_legend["skipped"],
+            self.skipped)
+        )
 
     def register(self, status):
         if status == BAD_SURVIVED:
