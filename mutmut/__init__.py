@@ -1299,4 +1299,7 @@ def add_to_active_queues(queue):
 
 def close_active_queues():
     for queue in _active_queues:
-        queue.close()
+        try:
+            queue.close()
+        except:
+            continue
