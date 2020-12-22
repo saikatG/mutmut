@@ -741,13 +741,13 @@ def check_mutants(mutants_queue, results_queue, cycle_process_after):
                 results_queue.put(('cycle', None, None, None))
                 did_cycle = True
                 break
-    except:
+    except Exception:
         tb.print_exc()
     finally:
         try:
             if not did_cycle:
                 results_queue.put(('end', None, None, None))
-        except:
+        except Exception:
             tb.print_exc()
 
 
