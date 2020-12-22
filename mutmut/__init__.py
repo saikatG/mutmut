@@ -716,7 +716,7 @@ def queue_mutants(*, progress, config, mutants_queue, mutations_by_file):
                 index += 1
     finally:
         mutants_queue.put(('end', None))
-
+        mutants_queue.join()
 
 def check_mutants(mutants_queue, results_queue, cycle_process_after):
     def feedback(line):
@@ -1108,7 +1108,7 @@ def run_mutation_tests(config, progress, mutations_by_file):
     # Need to explicitly use the spawn method for python < 3.8 on macOS
     mp_ctx = multiprocessing.get_context('spawn')
 
-    mutants_queue = mp_ctx.Queue(maxsize=100)
+    mutants_queue = mp_ctx.Queue(maxsize=0)
     add_to_active_queues(mutants_queue)
     queue_mutants_thread = Thread(
         target=queue_mutants,
@@ -1123,7 +1123,7 @@ def run_mutation_tests(config, progress, mutations_by_file):
     )
     queue_mutants_thread.start()
 
-    results_queue = mp_ctx.Queue(maxsize=100)
+    results_queue = mp_ctx.Queue(maxsize=0)
     add_to_active_queues(results_queue)
 
     def create_worker():
@@ -1302,4 +1302,6 @@ def close_active_queues():
         try:
             queue.close()
         except:
+            import traceback as tb
+            tb.print_exc()
             continue
