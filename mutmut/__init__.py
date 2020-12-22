@@ -27,7 +27,7 @@ from threading import (
     Timer,
     Thread,
 )
-from time import time
+from time import time, sleep
 
 from parso import parse
 from parso.python.tree import Name, Number, Keyword
@@ -721,7 +721,7 @@ def queue_mutants(*, progress, config, mutants_queue, mutations_by_file):
 def check_mutants(mutants_queue, results_queue, cycle_process_after):
     def feedback(line):
         results_queue.put(('progress', line, None, None))
-
+        sleep(0.1)
     did_cycle = False
 
     try:
@@ -734,14 +734,17 @@ def check_mutants(mutants_queue, results_queue, cycle_process_after):
             status = run_mutation(context, feedback)
 
             results_queue.put(('status', status, context.filename, context.mutation_id))
+            sleep(0.1)
             count += 1
             if count == cycle_process_after:
                 results_queue.put(('cycle', None, None, None))
+                sleep(0.1)
                 did_cycle = True
                 break
     finally:
         if not did_cycle:
             results_queue.put(('end', None, None, None))
+            sleep(0.1)
 
 
 def run_mutation(context: Context, callback) -> str:
