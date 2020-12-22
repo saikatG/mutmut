@@ -1136,7 +1136,7 @@ def run_mutation_tests(config, progress, mutations_by_file):
             kwargs=dict(
                 mutants_queue=mutants_queue,
                 results_queue=results_queue,
-                cycle_process_after=100,
+                cycle_process_after=1000,
             )
         )
         t.start()
