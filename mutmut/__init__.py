@@ -716,7 +716,7 @@ def queue_mutants(*, progress, config, mutants_queue, mutations_by_file):
                 index += 1
     finally:
         mutants_queue.put(('end', None))
-        mutants_queue.join()
+
 
 def check_mutants(mutants_queue, results_queue, cycle_process_after):
     def feedback(line):
